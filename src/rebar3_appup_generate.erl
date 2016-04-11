@@ -7,8 +7,13 @@
 -define(PROVIDER, generate).
 -define(DEPS, []).
 
--define(APPUPFILEFORMAT, "%% appup generated for ~p by rebar3_appup_plugin (~p)~n"
-        "{~p, [{~p, ~p}], [{~p, []}]}.~n").
+-define(APPUPFILEFORMAT,
+        "%% appup generated for ~p by rebar3_appup_plugin (~p)~n"
+        "{~p,~n"
+        " [{~p,~n"
+        "   ~p}],~n"
+        " [{~p,~n"
+        "   ~p}]}.~n").
 -define(DEFAULT_RELEASE_DIR, "rel").
 
 %% ===================================================================
@@ -178,7 +183,7 @@ generate_appup_files(TargetDir,
     Changed = [generate_instruction(changed, ModDeps1, File)
                || File <- ChangedFiles],
 
-    Inst = lists:append([Added, Deleted, Changed]),
+    Inst = lists:append([Added, Changed, Deleted]), % add_module -> update -> delete_module
 
     AppUpFile = case TargetDir of
                     undefined ->
@@ -190,7 +195,7 @@ generate_appup_files(TargetDir,
     ok = file:write_file(AppUpFile,
                          io_lib:fwrite(?APPUPFILEFORMAT,
                                        [App, rebar3_appup_utils:now_str(),
-                                        NewVer, OldVer, Inst, OldVer])),
+                                        NewVer, OldVer, Inst, OldVer, revert_instructions(Inst)])),
 
     rebar_api:console("Generated appup for ~p in ~s~n",
         [App, AppUpFile]),
@@ -223,6 +228,20 @@ generate_instruction_advanced(Name, _, code_change, Deps) ->
 generate_instruction_advanced(Name, _, _, Deps) ->
     %% Anything else
     {load_module, Name, Deps}.
+
+revert_instructions(Insts) ->
+    revert_instructions(Insts, []).
+
+revert_instructions([], Acc) ->
+    Acc; % keep the reversing list
+revert_instructions([Inst | RestInsts], Acc) when element(1, Inst) =:= add_module ->
+    %% {add_module, Mod}, {add_module, Mod, DepMods} -> {delete_module, ...}
+    revert_instructions(RestInsts, [setelement(1, Inst, delete_module) | Acc]);
+revert_instructions([Inst | RestInsts], Acc) when element(1, Inst) =:= delete_module ->
+    %% {delete_module, Mod}, {delete_module, Mod, DepMods} -> {add_module, ...}
+    revert_instructions(RestInsts, [setelement(1, Inst, add_module) | Acc]);
+revert_instructions([Inst | RestInsts], Acc) ->
+    revert_instructions(RestInsts, [Inst | Acc]).
 
 get_behavior(List) ->
     Attributes = proplists:get_value(attributes, List),
